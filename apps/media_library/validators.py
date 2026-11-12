@@ -1,6 +1,7 @@
 """File validation for media library uploads."""
 
 import contextlib
+import uuid
 from pathlib import Path
 
 from django.conf import settings
@@ -101,7 +102,7 @@ def storage_filename(original_name, sniffed_mime):
         # Raised for a name that is empty, or that sanitises down to nothing.
         stem = ""
 
-    return f"{stem or 'upload'}.{extension}"
+    return f"{(stem or 'upload')[:40]}-{uuid.uuid4().hex}.{extension}"
 
 
 # Magic-byte signatures for sniffing the *real* MIME of an uploaded file.

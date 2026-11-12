@@ -287,7 +287,7 @@ if CUSTOM_SIGNUP_URL and (
 # A deployment reachable from the internet — which it has to be, so the
 # platforms can deliver OAuth callbacks and webhooks — is open to the world
 # on "open". Self-hosters usually want "invite".
-SIGNUP_MODE = env("SIGNUP_MODE", default="open").strip().lower()
+SIGNUP_MODE = env("SIGNUP_MODE", default="invite").strip().lower()
 if SIGNUP_MODE not in {"open", "invite", "closed"}:
     from django.core.exceptions import ImproperlyConfigured
 
@@ -349,8 +349,8 @@ SOCIALACCOUNT_PROVIDERS = {
     },
 }
 
-SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
-SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = env.bool("SOCIALACCOUNT_EMAIL_AUTHENTICATION", default=False)
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = SOCIALACCOUNT_EMAIL_AUTHENTICATION
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_LOGIN_ON_GET = False
 ACCOUNT_ADAPTER = "apps.accounts.adapters.AccountAdapter"
@@ -653,6 +653,8 @@ INBOX_PLATFORM_MIN_POLL_SECONDS = {"youtube": env.int("INBOX_YOUTUBE_MIN_POLL_SE
 # urgent — the alternative is paying that on every poll, which is the bug this
 # whole change exists to fix.
 INBOX_DEEP_SWEEP_SECONDS = env.int("INBOX_DEEP_SWEEP_SECONDS", default=7 * 24 * 60 * 60)
+
+WEBHOOK_SECRET = env("WEBHOOK_SECRET", default="")
 
 # Webhook verification
 FACEBOOK_WEBHOOK_VERIFY_TOKEN = env("FACEBOOK_WEBHOOK_VERIFY_TOKEN", default="")

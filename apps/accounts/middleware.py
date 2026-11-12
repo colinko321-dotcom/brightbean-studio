@@ -75,7 +75,15 @@ class AuthRateLimitMiddleware:
 
     @staticmethod
     def _get_client_ip(request):
+        from django.conf import settings
+
+        if getattr(settings, "BB_TRUSTED_PROXIES", ()):
+            from apps.api.limits import _client_ip
+
+            return _client_ip(request) or ""
         x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
         if x_forwarded_for:
-            return x_forwarded_for.split(",")[0].strip()
+            hops = [h.strip() for h in x_forwarded_for.split(",") if h.strip()]
+            if hops:
+                return hops[-1]
         return request.META.get("REMOTE_ADDR", "")

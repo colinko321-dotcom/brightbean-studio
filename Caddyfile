@@ -32,7 +32,17 @@
         # behind. Pointing the root at an empty (or absent) directory makes
         # file_server 404 everything.
         root * {$CADDY_MEDIA_ROOT:/app/media}
-        file_server
+
+        @public_media path /media_library/* /avatars/* /workspaces/icons/*
+        handle @public_media {
+            header {
+                Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox"
+            }
+            file_server
+        }
+        handle {
+            respond 404
+        }
     }
 
     handle {

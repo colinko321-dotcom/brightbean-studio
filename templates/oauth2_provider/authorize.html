@@ -14,6 +14,16 @@
             <h1>{% blocktrans with name=application.name|default:"This application" %}Authorize {{ name }}?{% endblocktrans %}</h1>
             <p>{% blocktrans with name=application.name|default:"This application" %}{{ name }} wants to connect to your BrightBean Studio workspace with the following permissions:{% endblocktrans %}</p>
 
+            {% with dest=form.redirect_uri.value|default:redirect_uri %}
+                {% if dest %}
+                    <p class="bb-error" style="word-break: break-all;">
+                        {% trans "The app name above is chosen by the app itself. Access will be sent to:" %}
+                        <br><code>{{ dest }}</code><br>
+                        {% trans "Only continue if you recognise this address." %}
+                    </p>
+                {% endif %}
+            {% endwith %}
+
             <form id="authorizationForm" method="post">
                 {% csrf_token %}
 

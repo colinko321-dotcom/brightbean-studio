@@ -1626,6 +1626,7 @@ def queue_list(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("manage_social_accounts")
 def queue_create(request, workspace_id):
     """Create a new queue."""
     workspace = _get_workspace(request, workspace_id)
@@ -1684,6 +1685,7 @@ def queue_detail(request, workspace_id, queue_id):
 
 @login_required
 @require_POST
+@require_permission("manage_social_accounts")
 def queue_delete(request, workspace_id, queue_id):
     """Delete a queue."""
     workspace = _get_workspace(request, workspace_id)
@@ -1697,6 +1699,7 @@ def queue_delete(request, workspace_id, queue_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def queue_reorder(request, workspace_id, queue_id):
     """Reorder queue entries via HTMX drag-and-drop."""
     workspace = _get_workspace(request, workspace_id)
@@ -1716,6 +1719,7 @@ def queue_reorder(request, workspace_id, queue_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def queue_entry_remove(request, workspace_id, queue_id, entry_id):
     """Remove a single post from a queue, leaving a gap (comment §3).
 
@@ -1740,6 +1744,7 @@ def queue_entry_remove(request, workspace_id, queue_id, entry_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def queue_entry_reslot(request, workspace_id, queue_id, entry_id):
     """Move a queued post to the queue's next open slot (comment §4)."""
     workspace = _get_workspace(request, workspace_id)

@@ -84,6 +84,49 @@ def _get_workspace(request, workspace_id):
     return workspace
 
 
+def _require_can_edit_post(request, post):
+    membership = request.workspace_membership
+    perms = membership.effective_permissions if membership else {}
+    if post.author_id != request.user.id and not perms.get("edit_others_posts", False):
+        raise PermissionDenied("You do not have permission to change this post.")
+
+
+class _UploadRejectedError(Exception):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+
+def _create_uploaded_asset(workspace, user, uploaded_file, *, images_only=False):
+    from apps.media_library.quotas import StorageQuotaExceededError
+    from apps.media_library.services import create_asset
+    from apps.media_library.tasks import process_media_asset
+
+    try:
+        asset = create_asset(
+            organization=workspace.organization,
+            workspace=workspace,
+            uploaded_file=uploaded_file,
+            uploaded_by=user,
+        )
+    except ValidationError as exc:
+        messages = getattr(exc, "messages", None) or [str(exc)]
+        raise _UploadRejectedError(" ".join(messages)) from exc
+    except StorageQuotaExceededError as exc:
+        raise _UploadRejectedError(str(exc) or "Storage quota exceeded.", status=413) from exc
+
+    if images_only and asset.media_type not in (MediaAsset.MediaType.IMAGE, MediaAsset.MediaType.GIF):
+        asset.file.delete(save=False)
+        asset.delete()
+        raise _UploadRejectedError("Only image files are allowed")
+
+    asset.source = "upload"
+    asset.save(update_fields=["source"])
+    process_media_asset(str(asset.id))
+    return asset
+
+
 def _is_valid_uuid(value):
     try:
         uuid.UUID(value)
@@ -1582,6 +1625,7 @@ def thumbnail_picker(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("upload_media")
 def thumbnail_upload(request, workspace_id):
     """Upload an image from the local machine to the media library and return
     its id + URL so the composer can wire it as a YouTube thumbnail.
@@ -1594,23 +1638,10 @@ def thumbnail_upload(request, workspace_id):
     if not uploaded_file:
         return JsonResponse({"error": "No file provided"}, status=400)
 
-    content_type = uploaded_file.content_type or ""
-    if not content_type.startswith("image/"):
-        return JsonResponse({"error": "Only image files are allowed"}, status=400)
-
-    from apps.media_library.models import MediaAsset
-
-    asset = MediaAsset.objects.create(
-        organization=workspace.organization,
-        workspace=workspace,
-        uploaded_by=request.user,
-        file=uploaded_file,
-        filename=uploaded_file.name,
-        media_type=MediaAsset.MediaType.IMAGE,
-        mime_type=content_type,
-        file_size=uploaded_file.size,
-        source="upload",
-    )
+    try:
+        asset = _create_uploaded_asset(workspace, request.user, uploaded_file, images_only=True)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": exc.message}, status=exc.status)
 
     url = ""
     if asset.thumbnail:
@@ -1958,6 +1989,7 @@ def unsplash_search(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("upload_media")
 def unsplash_import(request, workspace_id, post_id=None):
     """Download selected Unsplash photos server-side and attach them as media.
 
@@ -2208,10 +2240,12 @@ def tiktok_creator_info(request, workspace_id, account_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def attach_media(request, workspace_id, post_id):
     """Attach a media asset to a post."""
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    _require_can_edit_post(request, post)
     media_asset_id = request.POST.get("media_asset_id")
 
     if not media_asset_id:
@@ -2251,6 +2285,7 @@ def attach_media(request, workspace_id, post_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def attach_pending_media(request, workspace_id):
     """Attach a library media asset as pending (before post is saved)."""
     workspace = _get_workspace(request, workspace_id)
@@ -2327,6 +2362,7 @@ def _attach_asset_for_composer(request, workspace, asset, post=None):
 
 @login_required
 @require_POST
+@require_permission("upload_media")
 def upload_media(request, workspace_id, post_id=None):
     """Upload a file directly from the composer and optionally attach to a post."""
     workspace = _get_workspace(request, workspace_id)
@@ -2335,33 +2371,15 @@ def upload_media(request, workspace_id, post_id=None):
     if not uploaded_file:
         return JsonResponse({"error": "No file provided"}, status=400)
 
-    from apps.media_library.models import MediaAsset
+    post = get_object_or_404(Post, id=post_id, workspace=workspace) if post_id else None
 
     # Determine media type
-    content_type = uploaded_file.content_type or ""
-    if content_type.startswith("image/"):
-        media_type = MediaAsset.MediaType.IMAGE
-    elif content_type.startswith("video/"):
-        media_type = MediaAsset.MediaType.VIDEO
-    elif content_type == "image/gif":
-        media_type = MediaAsset.MediaType.GIF
-    else:
-        media_type = MediaAsset.MediaType.DOCUMENT
+    try:
+        asset = _create_uploaded_asset(workspace, request.user, uploaded_file)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": exc.message}, status=exc.status)
 
-    asset = MediaAsset.objects.create(
-        organization=workspace.organization,
-        workspace=workspace,
-        uploaded_by=request.user,
-        file=uploaded_file,
-        filename=uploaded_file.name,
-        media_type=media_type,
-        mime_type=content_type,
-        file_size=uploaded_file.size,
-        source="upload",
-    )
-
-    if post_id:
-        post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    if post is not None:
         attachment = _attach_asset_for_composer(request, workspace, asset, post)
         # Option A: changing media on an approved post sends it back for re-approval.
         _revert_approved_to_review(post)
@@ -2392,10 +2410,12 @@ def upload_media(request, workspace_id, post_id=None):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def remove_media(request, workspace_id, post_id, media_id):
     """Remove a media attachment from a post."""
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    _require_can_edit_post(request, post)
     attachment = PostMedia.objects.filter(id=media_id, post=post).first()
     if attachment is not None:
         # Taking the last video off a post already scheduled to TikTok, or the
@@ -2425,6 +2445,7 @@ def remove_media(request, workspace_id, post_id, media_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def remove_pending_media(request, workspace_id, asset_id):
     """Remove a pending media asset (before post is saved)."""
     workspace = _get_workspace(request, workspace_id)
@@ -2498,6 +2519,7 @@ def drafts_list(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def post_delete(request, workspace_id, post_id):
     """Delete a post or a single platform post via HTMX.
 
@@ -2508,6 +2530,7 @@ def post_delete(request, workspace_id, post_id):
     """
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    _require_can_edit_post(request, post)
 
     account_id = request.GET.get("account") or request.POST.get("account")
     if account_id:
@@ -2774,29 +2797,7 @@ def _sync_idea_media_attachments(idea, workspace, ordered_asset_ids):
 
 def _create_idea_media_asset(workspace, user, uploaded_file):
     """Create a MediaAsset from an uploaded file for Idea create/edit flows."""
-    from apps.media_library.models import MediaAsset
-
-    content_type = uploaded_file.content_type or ""
-    if content_type == "image/gif":
-        media_type = MediaAsset.MediaType.GIF
-    elif content_type.startswith("image/"):
-        media_type = MediaAsset.MediaType.IMAGE
-    elif content_type.startswith("video/"):
-        media_type = MediaAsset.MediaType.VIDEO
-    else:
-        media_type = MediaAsset.MediaType.DOCUMENT
-
-    return MediaAsset.objects.create(
-        organization=workspace.organization,
-        workspace=workspace,
-        uploaded_by=user,
-        file=uploaded_file,
-        filename=uploaded_file.name,
-        media_type=media_type,
-        mime_type=content_type,
-        file_size=uploaded_file.size,
-        source="upload",
-    )
+    return _create_uploaded_asset(workspace, user, uploaded_file)
 
 
 @login_required
@@ -2841,7 +2842,10 @@ def idea_upload_media(request, workspace_id):
     if not uploaded_file:
         return JsonResponse({"error": "No file provided"}, status=400)
 
-    asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+    try:
+        asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": exc.message}, status=exc.status)
     return JsonResponse(
         {
             "asset_id": str(asset.id),
@@ -2881,7 +2885,10 @@ def idea_create(request, workspace_id):
     uploaded_file = request.FILES.get("media") or request.FILES.get("file")
     media_asset_id = request.POST.get("media_asset_id", "").strip()
     if uploaded_file:
-        uploaded_asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+        try:
+            uploaded_asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+        except _UploadRejectedError as exc:
+            return HttpResponse(exc.message, status=exc.status, content_type="text/plain")
         media_asset_ids.append(str(uploaded_asset.id))
     elif not media_asset_ids and media_asset_id:
         from apps.media_library.models import MediaAsset
@@ -2960,7 +2967,10 @@ def idea_edit(request, workspace_id, idea_id):
     uploaded_file = request.FILES.get("media") or request.FILES.get("file")
     uploaded_asset = None
     if uploaded_file:
-        uploaded_asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+        try:
+            uploaded_asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+        except _UploadRejectedError as exc:
+            return HttpResponse(exc.message, status=exc.status, content_type="text/plain")
         media_asset_ids.append(str(uploaded_asset.id))
     media_asset_ids = _normalize_media_asset_ids(media_asset_ids)
 
@@ -3273,6 +3283,7 @@ def category_list(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def category_create(request, workspace_id):
     """Create a new content category via HTMX."""
     workspace = _get_workspace(request, workspace_id)
@@ -3295,6 +3306,7 @@ def category_create(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("edit_others_posts")
 def category_edit(request, workspace_id, category_id):
     """Edit a content category via HTMX."""
     workspace = _get_workspace(request, workspace_id)
@@ -3313,6 +3325,7 @@ def category_edit(request, workspace_id, category_id):
 
 @login_required
 @require_POST
+@require_permission("edit_others_posts")
 def category_delete(request, workspace_id, category_id):
     """Delete a content category via HTMX."""
     workspace = _get_workspace(request, workspace_id)
@@ -3348,6 +3361,7 @@ def template_list(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def save_as_template(request, workspace_id, post_id):
     """Save the current post as a reusable template."""
     workspace = _get_workspace(request, workspace_id)
@@ -3386,10 +3400,15 @@ def save_as_template(request, workspace_id, post_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def template_delete(request, workspace_id, template_id):
     """Delete a post template."""
     workspace = _get_workspace(request, workspace_id)
     tpl = get_object_or_404(PostTemplate, id=template_id, workspace=workspace)
+    membership = request.workspace_membership
+    perms = membership.effective_permissions if membership else {}
+    if tpl.created_by_id != request.user.id and not perms.get("edit_others_posts", False):
+        raise PermissionDenied("You do not have permission to delete this template.")
     tpl.delete()
 
     return HttpResponse(
@@ -3757,6 +3776,7 @@ def tag_list(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("create_posts")
 def tag_create(request, workspace_id):
     """Create a new tag and return it as JSON."""
     workspace = _get_workspace(request, workspace_id)
