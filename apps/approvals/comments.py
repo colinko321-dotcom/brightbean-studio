@@ -17,6 +17,7 @@ from .models import PostComment
 # Match @mentions but not email addresses (require whitespace or start-of-string before @)
 MENTION_REGEX = re.compile(r"(?:^|(?<=\s))@(\w[\w.]*)")
 MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024  # 5MB
+ATTACHMENT_IMAGE_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 
 def create_comment(post, author, body, visibility, parent_id=None, attachment=None):
@@ -35,6 +36,17 @@ def create_comment(post, author, body, visibility, parent_id=None, attachment=No
     """
     if attachment and attachment.size > MAX_ATTACHMENT_SIZE:
         raise ValueError("Attachment exceeds 5MB limit.")
+
+    if visibility not in PostComment.Visibility.values:
+        raise ValueError("Invalid comment visibility.")
+
+    if attachment:
+        from apps.media_library.validators import sniff_mime, storage_filename
+
+        sniffed = sniff_mime(attachment)
+        if sniffed not in ATTACHMENT_IMAGE_MIMES:
+            raise ValueError("Attachments must be JPEG, PNG, GIF or WebP images.")
+        attachment.name = storage_filename(attachment.name, sniffed)
 
     parent_comment = None
     if parent_id:
@@ -129,9 +141,13 @@ def get_comments_for_post(post, user):
         workspace=workspace,
     ).first()
 
+    is_client = membership is not None and membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT
+
     active_replies = PostComment.objects.filter(
         deleted_at__isnull=True,
     ).select_related("author")
+    if is_client:
+        active_replies = active_replies.filter(visibility=PostComment.Visibility.EXTERNAL)
 
     qs = (
         PostComment.objects.filter(
@@ -147,7 +163,7 @@ def get_comments_for_post(post, user):
     )
 
     # Clients only see external comments
-    if membership and membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT:
+    if is_client:
         qs = qs.filter(visibility=PostComment.Visibility.EXTERNAL)
 
     return qs

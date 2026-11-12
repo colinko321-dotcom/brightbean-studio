@@ -8,6 +8,7 @@ PNG/HTML polyglot — real PNG header, ``<script>`` further in — uploaded as
 app's own origin, which on the Caddy path carries no CSP header either.
 """
 
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -55,7 +56,9 @@ def test_every_allowed_mime_has_a_canonical_extension():
     ],
 )
 def test_storage_filename_replaces_the_clients_extension(original, expected):
-    assert storage_filename(original, "image/png") == expected
+    stored = storage_filename(original, "image/png")
+    expected_stem, expected_ext = expected.rsplit(".", 1)
+    assert re.fullmatch(rf"{re.escape(expected_stem)}-[0-9a-f]{{32}}\.{expected_ext}", stored)
 
 
 def test_storage_filename_cannot_escape_the_upload_directory():

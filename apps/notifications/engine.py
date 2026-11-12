@@ -382,6 +382,18 @@ def _dispatch_email(delivery: NotificationDelivery) -> None:
     send_or_raise(msg)
 
 
+def _outgoing_webhook_key() -> bytes:
+    configured = getattr(settings, "WEBHOOK_SECRET", "")
+    if configured:
+        return configured.encode("utf-8")
+    from cryptography.hazmat.primitives.hashes import SHA256
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    return HKDF(algorithm=SHA256(), length=32, salt=None, info=b"brightbean-outgoing-webhook").derive(
+        settings.SECRET_KEY.encode("utf-8")
+    )
+
+
 def _dispatch_webhook(delivery: NotificationDelivery) -> None:
     """Send notification via webhook (HTTP POST with HMAC-SHA256 signature).
 
@@ -421,9 +433,8 @@ def _dispatch_webhook(delivery: NotificationDelivery) -> None:
         default=str,
     ).encode("utf-8")
 
-    webhook_secret = getattr(settings, "WEBHOOK_SECRET", settings.SECRET_KEY)
     signature = hmac.new(
-        webhook_secret.encode("utf-8"),
+        _outgoing_webhook_key(),
         payload,
         hashlib.sha256,
     ).hexdigest()

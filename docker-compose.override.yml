@@ -1,5 +1,6 @@
 services:
   migrate:
+    user: root
     volumes:
       - .:/app
     environment:
@@ -7,6 +8,7 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
 
   app:
+    user: root
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
@@ -15,6 +17,7 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
 
   worker:
+    user: root
     volumes:
       - .:/app
     environment:

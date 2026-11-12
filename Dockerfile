@@ -29,6 +29,11 @@ RUN DJANGO_SETTINGS_MODULE=config.settings.production \
     DATABASE_URL=sqlite:///tmp/build.db \
     python manage.py collectstatic --noinput
 
+RUN groupadd --system app && useradd --system --gid app --home-dir /app app \
+    && mkdir -p /app/media \
+    && chown -R app:app /app/media
+USER app
+
 EXPOSE 8000
 
 # One worker, threaded. Importing this app costs ~100 MB before serving a

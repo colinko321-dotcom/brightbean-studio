@@ -18,6 +18,13 @@ from . import services
 from .models import PostComment
 
 
+def _is_client(request):
+    from apps.members.models import WorkspaceMembership
+
+    membership = getattr(request, "workspace_membership", None)
+    return membership is not None and membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT
+
+
 def _get_workspace(request, workspace_id):
     from django.core.exceptions import PermissionDenied
 
@@ -189,6 +196,8 @@ def add_comment(request, workspace_id, post_id):
         return HttpResponse("Comment body is required.", status=400)
 
     visibility = request.POST.get("visibility", PostComment.Visibility.EXTERNAL)
+    if _is_client(request):
+        visibility = PostComment.Visibility.EXTERNAL
     parent_id = request.POST.get("parent_id") or None
     attachment = request.FILES.get("attachment")
 
@@ -294,6 +303,8 @@ def comment_attachment(request, workspace_id, post_id, comment_id):
         post=post,
         deleted_at__isnull=True,
     )
+    if _is_client(request) and comment.visibility != PostComment.Visibility.EXTERNAL:
+        raise Http404("This comment has no attachment.")
 
     if not comment.attachment:
         raise Http404("This comment has no attachment.")
@@ -311,6 +322,7 @@ def comment_attachment(request, workspace_id, post_id, comment_id):
     # validate_image_file_extension already refuses an .html suffix, but this
     # response never passes through a CDN or proxy that would add it.
     response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; sandbox"
     response["Cache-Control"] = "private, max-age=3600"
     return response
 

@@ -141,6 +141,15 @@ PUBLIC_MEDIA_PREFIXES = (
 )
 
 
+def serve_public_media(request, path, document_root=None):
+    response = serve(request, path, document_root=document_root)
+    response["Content-Security-Policy"] = (
+        "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox"
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 def media_urlpatterns():
     """Route the public subtrees of ``MEDIA_ROOT`` when this process serves media itself."""
     media_url = settings.MEDIA_URL
@@ -178,7 +187,7 @@ def media_urlpatterns():
     return [
         re_path(
             rf"^{re.escape(prefix)}(?P<path>{re.escape(subtree)}.*)$",
-            serve,
+            serve_public_media,
             {"document_root": document_root},
         )
         for subtree in PUBLIC_MEDIA_PREFIXES

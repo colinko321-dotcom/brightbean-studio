@@ -8,6 +8,8 @@ from .base import *  # noqa: F401, F403
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 
+SIGNUP_MODE = "open"
+
 # Use faster password hasher in tests
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
